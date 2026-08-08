@@ -6,6 +6,11 @@ contracts, optional signed-session authorization, browser smoke coverage, and lo
 virtualization, and cursor-paginated room history. The remaining work is
 split between public-demo proof and optional platform extensions.
 
+The implementation and presentation baseline is parked and documented in
+[PROJECT_STATUS.md](PROJECT_STATUS.md). Use [MAINTENANCE.md](MAINTENANCE.md) for the
+two-week review cadence; do not turn optional platform tracks into default demo scope
+without new operational evidence.
+
 ## Immediate execution order
 
 1. **Deploy the public demo**: connect `main` to Render, provide the service origin through

@@ -106,6 +106,9 @@ See [OPERATIONS.md](OPERATIONS.md) for health semantics and persistence.
 3. `docker build -t chatster:prod .` — mirrors the CI production-image check.
 4. Run the Go binary (or container) with a writable directory for SQLite; set `CHATSTER_DB_PATH` explicitly in production.
 
+For the final handoff and the recurring review cadence, see
+[PROJECT_STATUS.md](PROJECT_STATUS.md) and [MAINTENANCE.md](MAINTENANCE.md).
+
 ## Branching and commits
 
 - Prefer small, focused commits with short subject lines.

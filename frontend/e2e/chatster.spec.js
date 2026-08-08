@@ -17,12 +17,15 @@ async function joinChat(page, username) {
   await expect(page.getByPlaceholder(/type your message/i)).toBeEnabled();
 }
 
-async function sendMessage(page, content) {
+async function sendMessage(page, content, paceMs = 0) {
   const input = page.getByPlaceholder(/type your message/i);
   await expect(input).toBeEnabled();
   await input.fill(content);
   await input.press('Enter');
   await expect(messageContent(page, content)).toBeVisible();
+  if (paceMs > 0) {
+    await page.waitForTimeout(paceMs);
+  }
 }
 
 function uniqueToken(testInfo) {
@@ -90,7 +93,8 @@ test('keeps older history readable after appending messages', async ({ page }, t
   await waitForLive(page);
   await joinChat(page, username);
   for (let index = 0; index < appendedCount; index += 1) {
-    await sendMessage(page, `${prefix}-${index}`);
+    // Keep the long-history fixture below the production default of 5 messages/sec.
+    await sendMessage(page, `${prefix}-${index}`, 250);
   }
 
   const log = page.getByRole('log', { name: 'Chat messages' });

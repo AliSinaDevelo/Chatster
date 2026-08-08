@@ -4,6 +4,11 @@ Real-time chat reference stack: **Go** WebSocket hub + repository-backed history
 
 [![CI](https://github.com/AlisinaDevelo/Chatster/actions/workflows/ci.yml/badge.svg)](https://github.com/AlisinaDevelo/Chatster/actions/workflows/ci.yml)
 
+> **Release handoff:** local and CI proof is green at the current baseline. The only
+> open release-proof item is the external Render demo in [issue #20](https://github.com/AlisinaDevelo/Chatster/issues/20).
+> See [project status](docs/PROJECT_STATUS.md) and the [two-week maintenance runbook](docs/MAINTENANCE.md)
+> before reopening work.
+
 ## Preview
 
 ![Chatster UI — dark glass theme, live connection status, chat history, and composer](docs/assets/chatster-ui.png)
@@ -151,6 +156,8 @@ See `backend/.env.example` and `frontend/.env.example`.
 - [ADR index](docs/adr/README.md) — architecture decisions.
 - [Workflows](docs/WORKFLOWS.md) — CI, Dependabot, local and Docker dev.
 - [Operations](docs/OPERATIONS.md) — probes, `/metrics`, checklist.
+- [Project status](docs/PROJECT_STATUS.md) — release-readiness evidence and parked scope.
+- [Maintenance cadence](docs/MAINTENANCE.md) — the two-week revisit checklist.
 - [Contributing](CONTRIBUTING.md) — PRs, `make lint`, code of conduct.
 
 ## Stack
