@@ -61,21 +61,6 @@ func TestRedisFanoutAcrossInstances(t *testing.T) {
 	hubB.startBroker()
 	serverA := httptest.NewServer(mount(cfg, hubA, databaseA))
 	serverB := httptest.NewServer(mount(cfg, hubB, databaseB))
-	defer func() {
-		serverA.Close()
-		serverB.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := hubA.Shutdown(ctx); err != nil {
-			t.Errorf("shutdown instance A: %v", err)
-		}
-		if err := hubB.Shutdown(ctx); err != nil {
-			t.Errorf("shutdown instance B: %v", err)
-		}
-		_ = databaseA.Close()
-		_ = databaseB.Close()
-	}()
-
 	awaitRedisReady(t, fanoutA.Ready())
 	awaitRedisReady(t, fanoutB.Ready())
 
@@ -83,9 +68,29 @@ func TestRedisFanoutAcrossInstances(t *testing.T) {
 	generalB := mustRedisTestWS(t, serverB, "general")
 	engineeringB := mustRedisTestWS(t, serverB, "engineering")
 	defer func() {
+		// Let the hubs own the WebSocket close handshake so client read loops can
+		// report completion to the drain coordinator before the test closes sockets.
+		ctxA, cancelA := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownAErr := hubA.Shutdown(ctxA)
+		cancelA()
+		ctxB, cancelB := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownBErr := hubB.Shutdown(ctxB)
+		cancelB()
+
 		closeRedisTestWS(generalA)
 		closeRedisTestWS(generalB)
 		closeRedisTestWS(engineeringB)
+		serverA.Close()
+		serverB.Close()
+		_ = databaseA.Close()
+		_ = databaseB.Close()
+
+		if shutdownAErr != nil {
+			t.Errorf("shutdown instance A: %v", shutdownAErr)
+		}
+		if shutdownBErr != nil {
+			t.Errorf("shutdown instance B: %v", shutdownBErr)
+		}
 	}()
 
 	writeRedisTestMessage(t, generalA, Message{Type: "username", Content: "alice"})

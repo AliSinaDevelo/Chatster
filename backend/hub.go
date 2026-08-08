@@ -285,6 +285,9 @@ func (h *Hub) stopBroker(ctx context.Context) {
 		return
 	}
 	h.brokerCancel()
+	if err := h.fanout.Close(); err != nil {
+		slog.Warn("close redis broker", "err", err)
+	}
 	done := make(chan struct{})
 	go func() {
 		h.brokerWG.Wait()
@@ -293,9 +296,6 @@ func (h *Hub) stopBroker(ctx context.Context) {
 	select {
 	case <-done:
 	case <-ctx.Done():
-	}
-	if err := h.fanout.Close(); err != nil {
-		slog.Warn("close redis broker", "err", err)
 	}
 }
 
