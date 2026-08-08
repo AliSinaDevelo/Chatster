@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 // import logo from './logo.svg';
 import './App.css';
 import {
   connect,
   disconnect,
-  fetchRecentMessages,
+  fetchHistoryPage,
   fetchSession,
   loginSession,
   logoutSession,
@@ -32,6 +32,10 @@ function appendUniqueMessages(existing, incoming) {
   return nextMessages;
 }
 
+function prependUniqueMessages(existing, incoming) {
+  return appendUniqueMessages(incoming, existing);
+}
+
 function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [username, setUsername] = useState('');
@@ -41,6 +45,11 @@ function App() {
   const [accessToken, setAccessToken] = useState('');
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyPageVersion, setHistoryPageVersion] = useState(0);
+  const historyCursorRef = useRef(null);
 
   const sessionRequired = session.mode === 'session';
   const user = session.authenticated ? session.user : null;
@@ -96,6 +105,9 @@ function App() {
     const expireSession = () => {
       disconnect();
       setChatHistory([]);
+      historyCursorRef.current = null;
+      setHasOlderMessages(false);
+      setHistoryError('');
       setSession({ status: 'ready', mode: 'session', authenticated: false });
       setConnectionStatus('offline');
       setAuthError('Your session expired. Sign in again.');
@@ -127,10 +139,14 @@ function App() {
     }
 
     let cancelled = false;
-    fetchRecentMessages(50, currentRoom)
-      .then((messages) => {
+    fetchHistoryPage(50, currentRoom)
+      .then((page) => {
         if (!cancelled) {
-          setChatHistory((prevChatHistory) => appendUniqueMessages(prevChatHistory, messages));
+          setChatHistory((prevChatHistory) => appendUniqueMessages(prevChatHistory, page.messages));
+          if (historyCursorRef.current === null) {
+            historyCursorRef.current = page.nextCursor;
+            setHasOlderMessages(page.hasMore && Boolean(page.nextCursor));
+          }
         }
       })
       .catch((e) => {
@@ -179,6 +195,9 @@ function App() {
         return;
       }
       setChatHistory([]);
+      historyCursorRef.current = null;
+      setHasOlderMessages(false);
+      setHistoryError('');
       setActiveRoom(nextRoom);
     };
 
@@ -222,6 +241,9 @@ function App() {
 
     window.history.pushState({}, '', roomPath(room));
     setChatHistory([]);
+    historyCursorRef.current = null;
+    setHasOlderMessages(false);
+    setHistoryError('');
     setActiveRoom(room);
   };
 
@@ -254,6 +276,9 @@ function App() {
       await logoutSession();
       disconnect();
       setChatHistory([]);
+      historyCursorRef.current = null;
+      setHasOlderMessages(false);
+      setHistoryError('');
       setSession({ status: 'ready', mode: 'session', authenticated: false });
       setConnectionStatus('offline');
     } catch (error) {
@@ -262,6 +287,29 @@ function App() {
       setAuthBusy(false);
     }
   };
+
+  const loadOlderMessages = useCallback(async () => {
+    const before = historyCursorRef.current;
+    if (!before || historyLoading || !canChat) {
+      return false;
+    }
+
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const page = await fetchHistoryPage(50, currentRoom, before);
+      setChatHistory((prevChatHistory) => prependUniqueMessages(prevChatHistory, page.messages));
+      historyCursorRef.current = page.nextCursor;
+      setHasOlderMessages(page.hasMore && Boolean(page.nextCursor));
+      setHistoryPageVersion((version) => version + 1);
+      return true;
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Older history is unavailable.');
+      return false;
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [canChat, currentRoom, historyLoading]);
 
   return (
     <div className="App">
@@ -336,6 +384,11 @@ function App() {
                 chatHistory={chatHistory}
                 currentUserID={currentUserID}
                 currentUsername={currentUsername}
+                hasOlderMessages={hasOlderMessages}
+                historyLoading={historyLoading}
+                historyError={historyError}
+                historyPageVersion={historyPageVersion}
+                onLoadOlder={loadOlderMessages}
               />
               <ChatInput
                 sendMessage={send}

@@ -7,7 +7,7 @@ The UI is a **Vite + React** SPA: strong focus on **clarity, accessibility, and 
 | Area | Stance |
 |------|--------|
 | **State** | Local React state + WebSocket callbacks—appropriate for a single-screen chat without global client stores. The active room is mirrored in `/rooms/<name>`. |
-| **Data fetching** | `GET /api/session` discovery, room-aware WebSocket events, and credentialed `GET /api/messages?room=...` for initial load and reconnect catch-up. |
+| **Data fetching** | `GET /api/session` discovery, room-aware WebSocket events, and credentialed page-aware `GET /api/messages?room=...&limit=...&before=...` requests for initial load, reconnect catch-up, and older history. |
 | **Build tooling** | Vite 8 with the output directory kept at `build/` for the Go server and container image. |
 
 ## Accessibility (a11y)
@@ -19,11 +19,12 @@ Implemented practices include:
 - **Keyboard scrolling:** the scrollable message log is tabbable and exposes a visible focus ring, so keyboard users can enter and scroll the history directly.
 - **Announcement preference:** the **Quiet updates** checkbox persists locally and switches the message log to `aria-live="off"` for high-traffic rooms.
 - **Room navigation:** the header exposes only server-granted rooms in session mode, including valid rooms outside the anonymous demo presets, with URL state and reconnect/history behavior kept in sync.
+- **History pagination:** an accessible **Load older messages** control fetches room-bound cursor pages, preserves the scroll viewport when older rows are prepended, and deduplicates rows that overlap with live or reconnect data.
 - **Forms:** visible labels (or visually hidden where design uses placeholders), `aria-describedby` for hints, submit disabled when disconnected.
 - **Motion:** global `prefers-reduced-motion` respected in styles (see `index.css` / component SCSS).
 - **Automated checks:** the rendered app runs an axe-core accessibility smoke test in `App.test.jsx`, which executes in the normal Vitest/CI path. Playwright separately covers the real-browser chat workflow; it does not replace the accessibility check.
 
-**Next steps:** validate the interaction across a browser/device matrix and add paginated history if rooms outgrow the current 50-message reconnect window.
+**Next steps:** validate the interaction across a browser/device matrix and add virtualization refinements if rooms regularly exceed the measured long-history threshold.
 
 ## Performance budget (guidance)
 
@@ -55,12 +56,13 @@ avoiding the measured 148–294 ms large-history mount cost. At or above the thr
 rows, preserves the same message markup, and scrolls the latest item into view. The
 dependency is headless and adds no styling; the tradeoff is a small amount of positioning
 and measurement logic in `ChatHistory` in exchange for bounded DOM work. The current
-history API still requests 50 records, so this path primarily protects long-lived live
-rooms and future pagination.
+history flow starts with 50 records and loads older records through an opaque cursor, so
+this path primarily protects long-lived live rooms after users page through larger history.
 
 ## Testing
 
 - **Vitest + Testing Library** for components, session login/logout, stable-ID ownership, room routing, room-aware history requests, and the mocked WebSocket `api` module.
+- Pagination coverage verifies cursor requests, overlapping-row dedupe, the accessible older-history control, and scroll-position preservation while prepending a page.
 - Long-history component coverage verifies the virtual window still exposes a tabbable
   `role="log"`, rendered message content, timestamps, and ownership styling.
 - **Browser workflow smoke:** `npm run test:e2e` runs Chromium, Firefox, and WebKit locally after `npx playwright install`. CI runs the Chromium project on every push and stores the HTML report plus failure trace/screenshot/video artifacts. The matrix currently covers desktop engines only; mobile browsers, real assistive technology, and device farms remain outside this smoke path.

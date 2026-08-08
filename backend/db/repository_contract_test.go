@@ -96,6 +96,71 @@ func TestPostgresRepositoryUsesIDAsHistoryTieBreaker(t *testing.T) {
 	if len(history) != 2 || history[0].ID != first.ID || history[1].ID != second.ID {
 		t.Fatalf("equal-timestamp order: got %#v want IDs %d, %d", history, first.ID, second.ID)
 	}
+
+	older, err := database.GetMessagesBeforeInRoomContext(ctx, room, fixedTimestamp, second.ID, 10)
+	if err != nil {
+		t.Fatalf("read equal-timestamp page: %v", err)
+	}
+	if len(older) != 1 || older[0].ID != first.ID {
+		t.Fatalf("equal-timestamp cursor boundary: got %#v want first message", older)
+	}
+}
+
+func TestSQLiteRepositoryCursorPagination(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "cursor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	runCursorPaginationContract(t, database)
+}
+
+func TestPostgresRepositoryCursorPagination(t *testing.T) {
+	database := openPostgresTestRepository(t)
+	runCursorPaginationContract(t, database)
+}
+
+func runCursorPaginationContract(t *testing.T, repository Repository) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	room := fmt.Sprintf("cursor-%d", time.Now().UnixNano()%1_000_000_000)
+	for _, content := range []string{"one", "two", "three", "four"} {
+		if _, err := repository.SaveMessageInRoomContext(ctx, room, "alice", content, "message"); err != nil {
+			t.Fatalf("save %s: %v", content, err)
+		}
+	}
+
+	recent, err := repository.GetRecentMessagesInRoomContext(ctx, room, 2)
+	if err != nil {
+		t.Fatalf("read recent page: %v", err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("recent page length: got %d want 2", len(recent))
+	}
+	if got := []string{recent[0].Content, recent[1].Content}; got[0] != "three" || got[1] != "four" {
+		t.Fatalf("recent page: got %#v", got)
+	}
+
+	older, err := repository.GetMessagesBeforeInRoomContext(ctx, room, recent[0].Timestamp, recent[0].ID, 2)
+	if err != nil {
+		t.Fatalf("read older page: %v", err)
+	}
+	if len(older) != 2 {
+		t.Fatalf("older page length: got %d want 2", len(older))
+	}
+	if got := []string{older[0].Content, older[1].Content}; got[0] != "one" || got[1] != "two" {
+		t.Fatalf("older page: got %#v", got)
+	}
+
+	oldest, err := repository.GetMessagesBeforeInRoomContext(ctx, room, older[0].Timestamp, older[0].ID, 2)
+	if err != nil {
+		t.Fatalf("read final page: %v", err)
+	}
+	if len(oldest) != 0 {
+		t.Fatalf("final page should be empty, got %#v", oldest)
+	}
 }
 
 func openPostgresTestRepository(t *testing.T) *PostgresDB {

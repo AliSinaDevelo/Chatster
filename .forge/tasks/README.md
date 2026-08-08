@@ -15,6 +15,7 @@ GitHub is the task source of truth; the Markdown files in this directory are the
 | 0009 | [#27](https://github.com/AlisinaDevelo/Chatster/issues/27) | Add an optional Redis room fan-out adapter | done | next | 0008 |
 | 0010 | [#28](https://github.com/AlisinaDevelo/Chatster/issues/28) | Bind authenticated identity to sessions and room authorization | done | later | - |
 | 0011 | [#29](https://github.com/AlisinaDevelo/Chatster/issues/29) | Virtualize long room history without losing accessibility | done | later | - |
+| 0012 | [#30](https://github.com/AlisinaDevelo/Chatster/issues/30) | Add cursor-paginated room history | review | now | - |
 
 Run the managed ledger from the repository root:
 

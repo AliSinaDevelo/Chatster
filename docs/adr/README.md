@@ -14,6 +14,7 @@ Short records of **why** Chatster is shaped the way it is. New significant decis
 | [0008](0008-storage-repository-boundary.md) | Storage repository boundary for Postgres mode |
 | [0009](0009-cross-instance-room-event-contract.md) | Cross-instance room event contract |
 | [0010](0010-opt-in-signed-session-auth.md) | Opt-in signed session authentication |
+| [0011](0011-cursor-paginated-room-history.md) | Cursor-paginated room history |
 
 ## Template
 

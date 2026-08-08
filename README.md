@@ -13,7 +13,7 @@ Real-time chat reference stack: **Go** WebSocket hub + repository-backed history
 - WebSocket broadcast with reconnect, **buffered hub channel**, **bounded per-client outbound queues**, and safe gorilla/websocket write serialization.
 - Room-scoped chat and history, with `general` as the default and selectable `engineering` / `off-topic` rooms in the UI.
 - Explicit auth modes: public anonymous demo by default, or opt-in signed `HttpOnly` sessions with stable user IDs and server-enforced room grants.
-- Last **50** messages replayed on connect per room; **SQLite timestamp** parsing supports multiple on-disk formats.
+- The newest **50** messages replayed on connect per room, with cursor-paginated older history through `GET /api/messages`; **SQLite timestamp** parsing supports multiple on-disk formats.
 - **`GET /health`** with selected-storage ping (503 when degraded); **`GET /metrics`** for Prometheus.
 - **Abuse controls:** max username/message size (runes), per-IP **WebSocket upgrade** rate limit, per-client **message** rate limit, optional **`Origin`** allowlist.
 - Structured JSON logs (`slog`), graceful shutdown, GitHub Actions (lint, test + coverage artifact, WebSocket load smoke, ESLint, build, production image smoke), Dependabot, Docker Compose, single-service production image.
@@ -26,7 +26,7 @@ Real-time chat reference stack: **Go** WebSocket hub + repository-backed history
 ```mermaid
 flowchart LR
   Browser[React + Vite SPA] -->|WebSocket /ws?room=...| Server[Go HTTP and WebSocket server]
-  Browser -->|GET /api/messages?room=...| Server
+  Browser -->|GET /api/messages?room=...&limit=...&before=...| Server
   Server --> Hub[Hub and bounded client queues]
   Server --> History[History API]
   Hub --> SQLite[(SQLite)]

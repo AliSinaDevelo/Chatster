@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +180,102 @@ func TestMessagesEndpointReturnsBoundedHistory(t *testing.T) {
 	if payload.Messages[0].ID == 0 || payload.Messages[0].Timestamp.IsZero() {
 		t.Fatalf("message should include id and timestamp: %#v", payload.Messages[0])
 	}
+}
+
+func TestMessagesEndpointPaginatesWithRoomBoundCursor(t *testing.T) {
+	cfg, database, hub, cleanup := testStack(t)
+	defer cleanup()
+
+	for _, content := range []string{"one", "two", "three"} {
+		if _, err := database.SaveMessage("alice", content, "message"); err != nil {
+			t.Fatalf("save message %q: %v", content, err)
+		}
+	}
+
+	srv := httptest.NewServer(mount(cfg, hub, database))
+	defer srv.Close()
+
+	page := fetchHistoryPageForTest(t, srv.URL+"/api/messages?limit=2")
+	if len(page.Messages) != 2 || page.Messages[0].Content != "two" || page.Messages[1].Content != "three" {
+		t.Fatalf("first page: %#v", page.Messages)
+	}
+	if !page.HasMore || page.NextCursor == "" {
+		t.Fatalf("first page metadata: %#v", page)
+	}
+
+	older := fetchHistoryPageForTest(t, srv.URL+"/api/messages?limit=2&before="+url.QueryEscape(page.NextCursor))
+	if len(older.Messages) != 1 || older.Messages[0].Content != "one" {
+		t.Fatalf("older page: %#v", older.Messages)
+	}
+	if older.HasMore || older.NextCursor != "" {
+		t.Fatalf("final page metadata: %#v", older)
+	}
+
+	invalid, err := http.Get(srv.URL + "/api/messages?before=not-a-cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = invalid.Body.Close()
+	if invalid.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid cursor: got %d want 400", invalid.StatusCode)
+	}
+	empty, err := http.Get(srv.URL + "/api/messages?before=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = empty.Body.Close()
+	if empty.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty cursor: got %d want 400", empty.StatusCode)
+	}
+	oversized, err := http.Get(srv.URL + "/api/messages?before=" + url.QueryEscape(strings.Repeat("a", maxHistoryCursorSize+1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = oversized.Body.Close()
+	if oversized.StatusCode != http.StatusBadRequest {
+		t.Fatalf("oversized cursor: got %d want 400", oversized.StatusCode)
+	}
+	repeated, err := http.Get(srv.URL + "/api/messages?before=not-a-cursor&before=not-a-cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = repeated.Body.Close()
+	if repeated.StatusCode != http.StatusBadRequest {
+		t.Fatalf("repeated cursor: got %d want 400", repeated.StatusCode)
+	}
+
+	mismatched, err := http.Get(srv.URL + "/api/messages?room=engineering&before=" + url.QueryEscape(page.NextCursor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mismatched.Body.Close()
+	if mismatched.StatusCode != http.StatusBadRequest {
+		t.Fatalf("mismatched cursor room: got %d want 400", mismatched.StatusCode)
+	}
+}
+
+type historyPageTestPayload struct {
+	Messages   []Message `json:"messages"`
+	HasMore    bool      `json:"has_more"`
+	NextCursor string    `json:"next_cursor"`
+}
+
+func fetchHistoryPageForTest(t *testing.T, endpoint string) historyPageTestPayload {
+	t.Helper()
+	response, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("history page status: got %d", response.StatusCode)
+	}
+
+	var payload historyPageTestPayload
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func TestMessagesEndpointFiltersByRoom(t *testing.T) {
@@ -725,6 +822,19 @@ func TestHubShutdownDrainsWebSocketClients(t *testing.T) {
 	defer srv.Close()
 
 	c := mustDialWS(t, srv)
+	registrationDeadline := time.Now().Add(2 * time.Second)
+	for {
+		hub.mutex.Lock()
+		registered := len(hub.clients) == 1
+		hub.mutex.Unlock()
+		if registered {
+			break
+		}
+		if time.Now().After(registrationDeadline) {
+			t.Fatal("timed out waiting for WebSocket client registration")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	if err := hub.Shutdown(ctx); err != nil {
 		cancel()

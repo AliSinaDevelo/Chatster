@@ -101,6 +101,40 @@
   }
 }
 
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+
+  button {
+    min-height: 34px;
+    padding: 7px 12px;
+    border: 1px solid rgba(46, 230, 199, 0.35);
+    border-radius: var(--radius-sm);
+    color: var(--accent);
+    background: rgba(46, 230, 199, 0.08);
+    cursor: pointer;
+
+    &:hover:not(:disabled),
+    &:focus-visible:not(:disabled) {
+      background: rgba(46, 230, 199, 0.16);
+    }
+
+    &:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+  }
+
+  p {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
+  }
+}
+
 .messages-virtual-content {
   position: relative;
   width: 100%;

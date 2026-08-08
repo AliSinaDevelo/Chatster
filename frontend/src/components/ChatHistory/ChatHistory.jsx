@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import './ChatHistory.scss';
 
@@ -74,10 +74,22 @@ const MessageRow = forwardRef(({ message, currentUserID, currentUsername, index,
 
 MessageRow.displayName = 'MessageRow';
 
-const ChatHistory = ({ chatHistory, currentUserID = '', currentUsername }) => {
+const ChatHistory = ({
+  chatHistory,
+  currentUserID = '',
+  currentUsername,
+  hasOlderMessages = false,
+  historyLoading = false,
+  historyError = '',
+  historyPageVersion = 0,
+  onLoadOlder,
+}) => {
   const messagesRef = useRef(null);
   const messagesEndRef = useRef(null);
   const shouldStickToBottomRef = useRef(true);
+  const olderHistorySnapshotRef = useRef(null);
+  const observedHistoryPageRef = useRef(historyPageVersion);
+  const restoringOlderHistoryRef = useRef(false);
   const [reduceAnnouncements, setReduceAnnouncements] = useState(readAnnouncementsPreference);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(readReducedMotionPreference);
   const isVirtualized = chatHistory.length >= virtualizationThreshold;
@@ -157,10 +169,61 @@ const ChatHistory = ({ chatHistory, currentUserID = '', currentUsername }) => {
       return;
     }
 
+    if (restoringOlderHistoryRef.current) {
+      return;
+    }
+
     if (shouldStickToBottomRef.current) {
       scrollToBottom();
     }
   }, [chatHistory, scrollToBottom]);
+
+  useLayoutEffect(() => {
+    if (historyPageVersion === observedHistoryPageRef.current) {
+      return;
+    }
+    observedHistoryPageRef.current = historyPageVersion;
+    const snapshot = olderHistorySnapshotRef.current;
+    const element = messagesRef.current;
+    if (!snapshot || !element) {
+      olderHistorySnapshotRef.current = null;
+      return;
+    }
+
+    restoringOlderHistoryRef.current = true;
+    const restoreScrollPosition = () => {
+      element.scrollTop = snapshot.scrollTop + (element.scrollHeight - snapshot.scrollHeight);
+    };
+    restoreScrollPosition();
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(restoreScrollPosition);
+    }
+    olderHistorySnapshotRef.current = null;
+  }, [historyPageVersion]);
+
+  useEffect(() => {
+    if (restoringOlderHistoryRef.current) {
+      restoringOlderHistoryRef.current = false;
+    }
+  }, [chatHistory]);
+
+  const handleLoadOlder = () => {
+    const element = messagesRef.current;
+    if (element) {
+      olderHistorySnapshotRef.current = {
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      };
+    }
+    const result = onLoadOlder?.();
+    if (result && typeof result.then === 'function') {
+      result.then((loaded) => {
+        if (!loaded) {
+          olderHistorySnapshotRef.current = null;
+        }
+      });
+    }
+  };
 
   const renderMessage = (message, index, virtualItem) => {
     const style = virtualItem
@@ -217,6 +280,15 @@ const ChatHistory = ({ chatHistory, currentUserID = '', currentUsername }) => {
           </span>
         </div>
       </div>
+
+      {(hasOlderMessages || historyLoading || historyError) && (
+        <div className="history-pagination">
+          <button type="button" onClick={handleLoadOlder} disabled={historyLoading || !hasOlderMessages}>
+            {historyLoading ? 'Loading older messages...' : 'Load older messages'}
+          </button>
+          {historyError && <p role="alert">{historyError}</p>}
+        </div>
+      )}
 
       <div
         ref={messagesRef}

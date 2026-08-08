@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
-  connect,
-  disconnect,
-  fetchRecentMessages,
+	connect,
+	disconnect,
+	fetchHistoryPage,
+	fetchRecentMessages,
   fetchSession,
   loginSession,
   logoutSession,
@@ -21,14 +22,35 @@ describe('api room routing', () => {
     vi.unstubAllGlobals();
   });
 
-  test('requests history for the selected room', async () => {
-    await fetchRecentMessages(25, 'engineering');
+	test('requests history for the selected room', async () => {
+		await fetchRecentMessages(25, 'engineering');
 
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/messages?limit=25&room=engineering',
-      { credentials: 'include' }
-    );
-  });
+		{ credentials: 'include' }
+		);
+	});
+
+	test('requests an older history page with the opaque cursor', async () => {
+		fetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				messages: [{ id: 1 }],
+				has_more: true,
+				next_cursor: 'cursor-value',
+			}),
+		});
+
+		await expect(fetchHistoryPage(25, 'engineering', 'cursor-value')).resolves.toEqual({
+			messages: [{ id: 1 }],
+			hasMore: true,
+			nextCursor: 'cursor-value',
+		});
+		expect(fetch).toHaveBeenCalledWith(
+			'http://localhost:8080/api/messages?limit=25&room=engineering&before=cursor-value',
+			{ credentials: 'include' }
+		);
+	});
 
   test('opens the websocket in the selected room', () => {
     const instances = [];

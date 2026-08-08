@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import ChatHistory from './ChatHistory';
 
 beforeEach(() => {
@@ -92,6 +92,50 @@ describe('ChatHistory', () => {
 
     expect(log).toHaveAttribute('aria-live', 'off');
     expect(window.localStorage.getItem('chatster.reduce-announcements')).toBe('true');
+  });
+
+  test('preserves scroll position when older messages are loaded', async () => {
+    const user = userEvent.setup();
+    const onLoadOlder = vi.fn(() => Promise.resolve(true));
+    let scrollHeight = 400;
+    let scrollTop = 100;
+    const messages = createMessages(2);
+
+    const { rerender } = render(
+      <ChatHistory
+        currentUsername="alice"
+        chatHistory={messages}
+        hasOlderMessages
+        onLoadOlder={onLoadOlder}
+        historyPageVersion={0}
+      />
+    );
+    const log = screen.getByRole('log', { name: 'Chat messages' });
+    Object.defineProperty(log, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(log, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => { scrollTop = value; },
+    });
+
+    await user.click(screen.getByRole('button', { name: /load older messages/i }));
+    expect(onLoadOlder).toHaveBeenCalledOnce();
+
+    scrollHeight = 600;
+    rerender(
+      <ChatHistory
+        currentUsername="alice"
+        chatHistory={[createMessages(2)[0], createMessages(2)[1], ...messages]}
+        hasOlderMessages
+        onLoadOlder={onLoadOlder}
+        historyPageVersion={1}
+      />
+    );
+
+    await waitFor(() => expect(log.scrollTop).toBe(300));
   });
 
   test('virtualizes long histories while keeping rendered content accessible', async () => {

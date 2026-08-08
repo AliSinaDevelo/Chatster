@@ -48,6 +48,11 @@ flowchart LR
 
 Room names are validated as short ASCII identifiers by the backend. The frontend keeps the active room in `/rooms/<name>`, preserves it across reconnect/history requests, and exposes a small preset list through the header selector.
 
+The history endpoint returns the newest bounded page on initial load and reconnect. When older
+rows are available it also returns `has_more` and an opaque, versioned `next_cursor`; the
+frontend sends that cursor as `before` when the user requests another page. The cursor is
+bound to the room and the server re-checks authentication and room grants on every request.
+
 ```mermaid
 sequenceDiagram
   actor User
@@ -107,13 +112,13 @@ stateDiagram-v2
 
 - `GET /health` — JSON `status` / `database` / `service`; **503** when the selected repository ping fails ([OPERATIONS.md](OPERATIONS.md)).
 - `GET /metrics` — Prometheus exposition ([OBSERVABILITY.md](OBSERVABILITY.md)).
-- `GET /api/messages?room=...&limit=...` — authorized room history and viewer principal.
+- `GET /api/messages?room=...&limit=...&before=...` — authorized room history page and viewer principal; responses include `has_more` and `next_cursor` metadata.
 - `GET|POST|DELETE /api/session` — session discovery, bearer exchange, and logout.
 - `GET /` — plain-text banner.
 
 ### Frontend (`frontend/`)
 
-- **`src/api/index.js`**: Credentialed session/history requests, room-aware WebSocket lifecycle, reconnect, and `disconnect` on unmount.
+- **`src/api/index.js`**: Credentialed session/history page requests, room-aware WebSocket lifecycle, reconnect, and `disconnect` on unmount.
 - **`App.jsx` / `src/rooms.js`**: Session gate/expiry, connection state, authorized URL-backed room selection, anonymous username handshake, and message list.
 - **Styling**: SCSS + tokens; **accessibility** notes in [FRONTEND.md](FRONTEND.md).
 

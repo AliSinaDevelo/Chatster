@@ -386,7 +386,7 @@ func (db *DB) GetRecentMessagesInRoomContext(ctx context.Context, room string, l
 		return nil, err
 	}
 
-	rows, err := db.QueryContext(ctx, "SELECT id, room, user_id, username, content, type, timestamp FROM messages WHERE room = ? ORDER BY timestamp DESC, id DESC LIMIT ?", room, limit)
+	rows, err := db.QueryContext(ctx, "SELECT id, room, user_id, username, content, type, timestamp FROM messages WHERE room = ? ORDER BY julianday(timestamp) DESC, id DESC LIMIT ?", room, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +419,53 @@ func (db *DB) GetRecentMessagesInRoomContext(ctx context.Context, room string, l
 		return nil, err
 	}
 
+	return messages, nil
+}
+
+// GetMessagesBeforeInRoomContext retrieves the page immediately older than a message cursor.
+func (db *DB) GetMessagesBeforeInRoomContext(ctx context.Context, room string, before time.Time, beforeID int64, limit int) ([]Message, error) {
+	room, err := NormalizeRoom(room)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, `
+SELECT id, room, user_id, username, content, type, timestamp
+FROM messages
+WHERE room = ? AND (
+    julianday(timestamp) < julianday(?) OR
+    (julianday(timestamp) = julianday(?) AND id < ?)
+)
+ORDER BY julianday(timestamp) DESC, id DESC
+LIMIT ?`, room, before.UTC(), before.UTC(), beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var messages []Message
+	for rows.Next() {
+		var msg Message
+		var timestamp string
+		if err := rows.Scan(&msg.ID, &msg.Room, &msg.UserID, &msg.Username, &msg.Content, &msg.Type, &timestamp); err != nil {
+			return nil, err
+		}
+
+		ts, err := parseMsgTimestamp(timestamp)
+		if err != nil {
+			msg.Timestamp = time.Now().UTC()
+		} else {
+			msg.Timestamp = ts
+		}
+		messages = append(messages, msg)
+	}
+
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return messages, nil
 }
 

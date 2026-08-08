@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,6 +238,14 @@ func TestGetRecentMessagesUsesIDForTimestampTies(t *testing.T) {
 	}
 	if messages[0].ID != first.ID || messages[1].ID != second.ID {
 		t.Fatalf("equal-timestamp order: got IDs %d, %d want %d, %d", messages[0].ID, messages[1].ID, first.ID, second.ID)
+	}
+
+	older, err := database.GetMessagesBeforeInRoomContext(context.Background(), DefaultRoom, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), second.ID, 10)
+	if err != nil {
+		t.Fatalf("GetMessagesBeforeInRoomContext: %v", err)
+	}
+	if len(older) != 1 || older[0].ID != first.ID {
+		t.Fatalf("equal-timestamp cursor order: got %#v want first message", older)
 	}
 }
 

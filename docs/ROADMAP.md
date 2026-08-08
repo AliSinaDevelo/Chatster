@@ -3,7 +3,7 @@
 Chatster's current release baseline is a room-scoped chat service with SQLite history,
 bounded WebSocket fan-out, graceful shutdown, opt-in tracing, Postgres repository
 contracts, optional signed-session authorization, browser smoke coverage, and long-history
-virtualization. The remaining work is
+virtualization, and cursor-paginated room history. The remaining work is
 split between public-demo proof and optional platform extensions.
 
 ## Immediate execution order
@@ -17,6 +17,12 @@ split between public-demo proof and optional platform extensions.
 3. **Reassess before scaling**: use the production demo's traffic and operational evidence
    to decide whether the implemented opt-in authentication, Postgres, and cross-instance
    fan-out modes should be enabled in a specific deployment.
+
+## Recently completed
+
+- **Cursor-paginated room history** ([issue #30](https://github.com/AlisinaDevelo/Chatster/issues/30)):
+  implemented as an additive, room-bound `before` cursor with deterministic timestamp/ID
+  ordering, page metadata, SQLite/Postgres contract coverage, and accessible frontend loading.
 
 ## Optional platform tracks
 

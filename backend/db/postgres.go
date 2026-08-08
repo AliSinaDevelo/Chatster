@@ -329,6 +329,43 @@ LIMIT $2`, room, limit)
 	return messages, nil
 }
 
+// GetMessagesBeforeInRoomContext retrieves the page immediately older than a message cursor.
+func (db *PostgresDB) GetMessagesBeforeInRoomContext(ctx context.Context, room string, before time.Time, beforeID int64, limit int) ([]Message, error) {
+	room, err := NormalizeRoom(room)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.pool.Query(ctx, `
+SELECT id, room, user_id, username, content, type, timestamp
+FROM messages
+WHERE room = $1 AND (timestamp < $2 OR (timestamp = $2 AND id < $3))
+ORDER BY timestamp DESC, id DESC
+LIMIT $4`, room, before.UTC(), beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	messages := make([]Message, 0)
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(&message.ID, &message.Room, &message.UserID, &message.Username, &message.Content, &message.Type, &message.Timestamp); err != nil {
+			return nil, err
+		}
+		message.Timestamp = message.Timestamp.UTC()
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+	return messages, nil
+}
+
 // PingContext checks Postgres health with a caller context.
 func (db *PostgresDB) PingContext(ctx context.Context) error {
 	return db.pool.Ping(ctx)

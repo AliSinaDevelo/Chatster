@@ -63,6 +63,29 @@ Example:
 
 Use this endpoint for Kubernetes liveness/readiness or load balancer probes.
 
+## History API
+
+`GET /api/messages` returns a bounded, room-scoped history page. The first request for a
+room, and every reconnect catch-up request, omits `before` and starts at the newest records:
+
+```text
+GET /api/messages?room=engineering&limit=50
+```
+
+The server clamps `limit` to the supported range and returns `has_more` plus `next_cursor`
+when older rows remain. The client can request the next page with that cursor:
+
+```text
+GET /api/messages?room=engineering&limit=50&before=<opaque-cursor>
+```
+
+The cursor is versioned, URL-safe, and bound to the room. Treat it as opaque: do not parse,
+store it as a message identifier, or construct one from timestamp/ID query parameters. A
+malformed, oversized, repeated, or room-mismatched cursor returns `400`; authorization and
+room-grant checks still run for every page. The response is `Cache-Control: no-store` and
+the frontend exposes the flow through the accessible **Load older messages** control while
+preserving the user's scroll position.
+
 ## Session operations
 
 `GET /api/session` reports the current auth mode and browser session state without returning

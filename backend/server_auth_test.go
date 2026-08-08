@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,73 @@ func TestSessionModeRejectsExpiredHistorySession(t *testing.T) {
 	}
 	if wsResponse == nil || wsResponse.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expired WebSocket response: %#v", wsResponse)
+	}
+}
+
+func TestSessionModeProtectsPaginatedHistory(t *testing.T) {
+	cfg, database, hub, cleanup := testStack(t)
+	defer cleanup()
+	for _, content := range []string{"older", "newer"} {
+		if _, err := database.SaveMessageInRoom("engineering", "alice", content, "message"); err != nil {
+			t.Fatalf("save history message: %v", err)
+		}
+	}
+	authService := testAuthService(t, time.Now)
+	srv := httptest.NewServer(mountWithAuth(cfg, hub, database, authService))
+	defer srv.Close()
+	cookie := loginForSession(t, srv.URL)
+
+	firstRequest, err := http.NewRequest(http.MethodGet, srv.URL+"/api/messages?room=engineering&limit=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRequest.AddCookie(cookie)
+	firstResponse, err := http.DefaultClient.Do(firstRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = firstResponse.Body.Close() }()
+	if firstResponse.StatusCode != http.StatusOK {
+		t.Fatalf("first page: got %d", firstResponse.StatusCode)
+	}
+	var firstPage struct {
+		Messages   []Message      `json:"messages"`
+		HasMore    bool           `json:"has_more"`
+		NextCursor string         `json:"next_cursor"`
+		Viewer     auth.Principal `json:"viewer"`
+	}
+	if err := json.NewDecoder(firstResponse.Body).Decode(&firstPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Messages) != 1 || firstPage.Messages[0].Content != "newer" || !firstPage.HasMore || firstPage.NextCursor == "" {
+		t.Fatalf("first page payload: %#v", firstPage)
+	}
+	if firstPage.Viewer.UserID != "usr_alice" {
+		t.Fatalf("first page viewer: %#v", firstPage.Viewer)
+	}
+
+	olderRequest, err := http.NewRequest(http.MethodGet, srv.URL+"/api/messages?room=engineering&limit=1&before="+url.QueryEscape(firstPage.NextCursor), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	olderRequest.AddCookie(cookie)
+	olderResponse, err := http.DefaultClient.Do(olderRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = olderResponse.Body.Close() }()
+	if olderResponse.StatusCode != http.StatusOK {
+		t.Fatalf("older page: got %d", olderResponse.StatusCode)
+	}
+	var olderPage struct {
+		Messages []Message `json:"messages"`
+		HasMore  bool      `json:"has_more"`
+	}
+	if err := json.NewDecoder(olderResponse.Body).Decode(&olderPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(olderPage.Messages) != 1 || olderPage.Messages[0].Content != "older" || olderPage.HasMore {
+		t.Fatalf("older page payload: %#v", olderPage)
 	}
 }
 

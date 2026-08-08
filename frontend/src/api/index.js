@@ -111,11 +111,14 @@ export function sendMsg(msg) {
   }
 }
 
-export async function fetchRecentMessages(limit = 50, room = DEFAULT_ROOM) {
+export async function fetchHistoryPage(limit = 50, room = DEFAULT_ROOM, before = null) {
   const params = new URLSearchParams({
     limit: String(limit),
     room,
   });
+  if (before) {
+    params.set('before', before);
+  }
   const response = await fetch(`${defaultApiUrl()}/api/messages?${params.toString()}`, {
     credentials: 'include',
   });
@@ -124,7 +127,19 @@ export async function fetchRecentMessages(limit = 50, room = DEFAULT_ROOM) {
   }
 
   const payload = await response.json();
-  return Array.isArray(payload) ? payload : payload.messages || [];
+  if (Array.isArray(payload)) {
+    return { messages: payload, hasMore: false, nextCursor: null };
+  }
+  return {
+    messages: payload.messages || [],
+    hasMore: payload.has_more === true,
+    nextCursor: payload.next_cursor || null,
+  };
+}
+
+export async function fetchRecentMessages(limit = 50, room = DEFAULT_ROOM) {
+  const page = await fetchHistoryPage(limit, room);
+  return page.messages;
 }
 
 export async function fetchSession() {

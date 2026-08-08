@@ -226,14 +226,37 @@ func messagesHandler(database db.Repository, authService *auth.Service) http.Han
 			}
 		}
 
+		var before *historyCursor
+		if rawValues, present := r.URL.Query()["before"]; present {
+			if len(rawValues) != 1 {
+				http.Error(w, "invalid history cursor", http.StatusBadRequest)
+				return
+			}
+			cursor, err := decodeHistoryCursor(rawValues[0])
+			if err != nil || !historyCursorRoomMatches(cursor, room) {
+				http.Error(w, "invalid history cursor", http.StatusBadRequest)
+				return
+			}
+			before = &cursor
+		}
+
+		fetchLimit := limit + 1
+
 		ctx, span := telemetry.Start(
 			r.Context(),
 			"chatster.storage.history",
 			attribute.String("chatster.room", room),
 			attribute.Int("chatster.history.limit", limit),
+			attribute.Bool("chatster.history.before", before != nil),
 		)
 		defer span.End()
-		messages, err := database.GetRecentMessagesInRoomContext(ctx, room, limit)
+
+		var messages []db.Message
+		if before == nil {
+			messages, err = database.GetRecentMessagesInRoomContext(ctx, room, fetchLimit)
+		} else {
+			messages, err = database.GetMessagesBeforeInRoomContext(ctx, room, before.Timestamp, before.ID, fetchLimit)
+		}
 		if err != nil {
 			telemetry.MarkError(span)
 			slog.Warn("list message history", "err", err)
@@ -243,13 +266,29 @@ func messagesHandler(database db.Repository, authService *auth.Service) http.Han
 		if messages == nil {
 			messages = []db.Message{}
 		}
+		hasMore := len(messages) > limit
+		if hasMore {
+			messages = messages[len(messages)-limit:]
+		}
+		var nextCursor *string
+		if hasMore {
+			encoded, err := encodeHistoryCursor(room, messages[0])
+			if err != nil {
+				telemetry.MarkError(span)
+				http.Error(w, "message history unavailable", http.StatusInternalServerError)
+				return
+			}
+			nextCursor = &encoded
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"room":     room,
-			"messages": messages,
-			"limit":    limit,
-			"viewer":   principal,
+			"room":        room,
+			"messages":    messages,
+			"limit":       limit,
+			"has_more":    hasMore,
+			"next_cursor": nextCursor,
+			"viewer":      principal,
 		})
 	}
 }

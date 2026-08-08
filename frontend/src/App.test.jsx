@@ -6,7 +6,7 @@ import App from './App';
 import {
   connect,
   disconnect,
-  fetchRecentMessages,
+  fetchHistoryPage,
   fetchSession,
   loginSession,
   logoutSession,
@@ -16,7 +16,7 @@ import {
 vi.mock('./api', () => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
-  fetchRecentMessages: vi.fn(),
+  fetchHistoryPage: vi.fn(),
   fetchSession: vi.fn(),
   loginSession: vi.fn(),
   logoutSession: vi.fn(),
@@ -27,7 +27,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.replaceState({}, '', '/');
-    fetchRecentMessages.mockResolvedValue([]);
+    fetchHistoryPage.mockResolvedValue({ messages: [], hasMore: false, nextCursor: null });
     fetchSession.mockResolvedValue({ mode: 'anonymous', authenticated: false });
     loginSession.mockResolvedValue({
       mode: 'session',
@@ -54,22 +54,54 @@ describe('App', () => {
   });
 
   test('loads recent messages when connected', async () => {
-    fetchRecentMessages.mockResolvedValue([
-      {
+    fetchHistoryPage.mockResolvedValue({
+      messages: [{
         id: 7,
         type: 'message',
         username: 'bob',
         content: 'already here',
         timestamp: '2026-06-24T09:00:00Z',
-      },
-    ]);
+      }],
+      hasMore: false,
+      nextCursor: null,
+    });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(fetchRecentMessages).toHaveBeenCalledWith(50, 'general');
+      expect(fetchHistoryPage).toHaveBeenCalledWith(50, 'general');
     });
     expect(await screen.findByText('already here')).toBeInTheDocument();
+  });
+
+  test('loads older history pages without duplicating the current window', async () => {
+    fetchHistoryPage
+      .mockResolvedValueOnce({
+        messages: [{ id: 2, type: 'message', username: 'bob', content: 'two' }],
+        hasMore: true,
+        nextCursor: 'cursor-one',
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          { id: 1, type: 'message', username: 'alice', content: 'one' },
+          { id: 2, type: 'message', username: 'bob', content: 'two' },
+        ],
+        hasMore: false,
+        nextCursor: null,
+      });
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    const loadOlder = await screen.findByRole('button', { name: /load older messages/i });
+    await user.click(loadOlder);
+
+    await waitFor(() => {
+      expect(fetchHistoryPage).toHaveBeenLastCalledWith(50, 'general', 'cursor-one');
+    });
+    expect(await screen.findByText('one')).toBeInTheDocument();
+    expect(screen.getByText('two')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /load older messages/i })).not.toBeInTheDocument();
   });
 
   test('disconnects on unmount', () => {
@@ -108,7 +140,7 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(connect).toHaveBeenLastCalledWith(expect.any(Function), expect.any(Function), 'engineering');
-      expect(fetchRecentMessages).toHaveBeenLastCalledWith(50, 'engineering');
+      expect(fetchHistoryPage).toHaveBeenLastCalledWith(50, 'engineering');
     });
     expect(window.location.pathname).toBe('/rooms/engineering');
   });
