@@ -1,7 +1,7 @@
 # Project status
 
 **Reviewed:** 2026-08-09
-**Release baseline:** `main` at `ed21707`
+**Release baseline:** `main` at `915087b`
 **Repository:** [AlisinaDevelo/Chatster](https://github.com/AlisinaDevelo/Chatster)
 
 ## Executive summary
@@ -29,7 +29,7 @@ prove the container path; they do not prove an external host.
 | Dependency security | Reviewed | `npm audit --omit=dev --audit-level=high` reports zero production vulnerabilities on this review |
 | Public demo | Pending | Requires the owner to connect Render, set the exact allowed origin, and run the external smoke checklist in issue #20 |
 
-The latest green GitHub Actions proof is [run 31280877537](https://github.com/AlisinaDevelo/Chatster/actions/runs/31280877537), with successful `backend`, `postgres`, `frontend`, and `production-image` jobs.
+The latest green GitHub Actions proof is [run 31284915273](https://github.com/AlisinaDevelo/Chatster/actions/runs/31284915273), with successful `backend`, `postgres`, `frontend`, and `production-image` jobs.
 
 ## What is intentionally parked
 
