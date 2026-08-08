@@ -845,8 +845,15 @@ func TestHubShutdownDrainsWebSocketClients(t *testing.T) {
 	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := c.ReadMessage(); err == nil || !websocket.IsCloseError(err, shutdownCloseCode) {
-		t.Fatalf("expected service-restart close code %d, got %v", shutdownCloseCode, err)
+	for {
+		_, _, err := c.ReadMessage()
+		if err == nil {
+			continue
+		}
+		if !websocket.IsCloseError(err, shutdownCloseCode) {
+			t.Fatalf("expected service-restart close code %d, got %v", shutdownCloseCode, err)
+		}
+		break
 	}
 
 	_, resp, err := websocket.DefaultDialer.Dial(wsURL(srv), nil)
