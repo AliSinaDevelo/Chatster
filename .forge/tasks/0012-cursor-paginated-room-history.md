@@ -1,7 +1,7 @@
 ---
 id: 0012
 title: Add cursor-paginated room history
-status: review
+status: done
 agent: backend-specialist
 model: sonnet
 depends_on: []
@@ -21,6 +21,13 @@ Extend room history beyond the fixed reconnect window with a stable, bounded cur
 
 ## Context
 The current endpoint returns only the newest 50 messages (capped at 100), while the long-history UI already virtualizes large in-memory lists. Keep the first-page response backward compatible and preserve signed-session authorization on every page. Do not expose raw database timestamps or IDs as a public cursor format; encode and validate a versioned room-bound cursor at the HTTP boundary.
+
+## Verification
+
+- `go test -race ./...`, `go vet ./...`, and the focused SQLite/Postgres cursor contracts pass locally.
+- `npm run lint`, `npm run test:ci`, `npm run build`, and `npm run test:e2e:ci` pass locally.
+- The disposable Postgres 17 contract run and production-image deployment smoke pass locally.
+- GitHub Actions run [31280687192](https://github.com/AlisinaDevelo/Chatster/actions/runs/31280687192) is green across backend, Postgres, frontend, and production-image jobs.
 
 ## Notes
 Use a `(timestamp, id)` ordering because timestamps can collide. The repository methods should accept parsed cursor values rather than knowing the HTTP encoding. The first page remains the reconnect catch-up path; older pages are explicit user-driven history loads.
