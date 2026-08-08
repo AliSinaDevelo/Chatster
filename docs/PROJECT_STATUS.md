@@ -1,7 +1,7 @@
 # Project status
 
 **Reviewed:** 2026-08-09
-**Release baseline:** `main` at `acf230e`
+**Release baseline:** `main` at `ed21707`
 **Repository:** [AlisinaDevelo/Chatster](https://github.com/AlisinaDevelo/Chatster)
 
 ## Executive summary
