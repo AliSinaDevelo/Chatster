@@ -50,6 +50,16 @@ function App() {
   const [historyError, setHistoryError] = useState('');
   const [historyPageVersion, setHistoryPageVersion] = useState(0);
   const historyCursorRef = useRef(null);
+  const historyRequestVersionRef = useRef(0);
+
+  const resetHistory = useCallback(() => {
+    historyRequestVersionRef.current += 1;
+    setChatHistory([]);
+    historyCursorRef.current = null;
+    setHasOlderMessages(false);
+    setHistoryLoading(false);
+    setHistoryError('');
+  }, []);
 
   const sessionRequired = session.mode === 'session';
   const user = session.authenticated ? session.user : null;
@@ -59,10 +69,19 @@ function App() {
   const currentRoom = availableRooms.includes(activeRoom)
     ? activeRoom
     : availableRooms[0] || DEFAULT_ROOM;
+  const currentRoomRef = useRef(currentRoom);
   const canChat = session.status === 'ready' && (!sessionRequired || Boolean(user));
   const currentUsername = user?.display_name || username;
   const currentUserID = user?.user_id || '';
   const hasUsername = Boolean(user) || username !== '';
+
+  useEffect(() => {
+    const roomChanged = currentRoomRef.current !== currentRoom;
+    currentRoomRef.current = currentRoom;
+    if (roomChanged) {
+      resetHistory();
+    }
+  }, [currentRoom, resetHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,10 +123,7 @@ function App() {
     const expiresIn = Date.parse(user.expires_at) - Date.now();
     const expireSession = () => {
       disconnect();
-      setChatHistory([]);
-      historyCursorRef.current = null;
-      setHasOlderMessages(false);
-      setHistoryError('');
+      resetHistory();
       setSession({ status: 'ready', mode: 'session', authenticated: false });
       setConnectionStatus('offline');
       setAuthError('Your session expired. Sign in again.');
@@ -115,7 +131,7 @@ function App() {
     const timer = window.setTimeout(expireSession, Math.max(0, expiresIn));
 
     return () => window.clearTimeout(timer);
-  }, [sessionRequired, user?.expires_at]);
+  }, [resetHistory, sessionRequired, user?.expires_at]);
 
   useEffect(() => {
     if (!canChat) {
@@ -170,7 +186,7 @@ function App() {
           return;
         }
         disconnect();
-        setChatHistory([]);
+        resetHistory();
         setSession({ ...nextSession, status: 'ready' });
         setConnectionStatus('offline');
         setAuthError(
@@ -186,7 +202,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [connectionStatus, sessionRequired, user]);
+  }, [connectionStatus, resetHistory, sessionRequired, user]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -194,16 +210,14 @@ function App() {
       if (nextRoom === activeRoom) {
         return;
       }
-      setChatHistory([]);
-      historyCursorRef.current = null;
-      setHasOlderMessages(false);
-      setHistoryError('');
+      currentRoomRef.current = nextRoom;
+      resetHistory();
       setActiveRoom(nextRoom);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [activeRoom]);
+  }, [activeRoom, resetHistory]);
 
   useEffect(() => {
     if (connectionStatus === 'connected' && hasUsername && !sessionRequired) {
@@ -240,10 +254,8 @@ function App() {
     }
 
     window.history.pushState({}, '', roomPath(room));
-    setChatHistory([]);
-    historyCursorRef.current = null;
-    setHasOlderMessages(false);
-    setHistoryError('');
+    currentRoomRef.current = room;
+    resetHistory();
     setActiveRoom(room);
   };
 
@@ -258,6 +270,7 @@ function App() {
     try {
       const nextSession = await loginSession(token);
       setAccessToken('');
+      resetHistory();
       setSession({ ...nextSession, status: 'ready' });
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : 'Sign in failed.');
@@ -275,10 +288,7 @@ function App() {
     try {
       await logoutSession();
       disconnect();
-      setChatHistory([]);
-      historyCursorRef.current = null;
-      setHasOlderMessages(false);
-      setHistoryError('');
+      resetHistory();
       setSession({ status: 'ready', mode: 'session', authenticated: false });
       setConnectionStatus('offline');
     } catch (error) {
@@ -294,20 +304,36 @@ function App() {
       return false;
     }
 
+    const requestedRoom = currentRoom;
+    const requestVersion = historyRequestVersionRef.current + 1;
+    historyRequestVersionRef.current = requestVersion;
+    const isCurrentRequest = () => (
+      requestVersion === historyRequestVersionRef.current &&
+      requestedRoom === currentRoomRef.current
+    );
+
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      const page = await fetchHistoryPage(50, currentRoom, before);
+      const page = await fetchHistoryPage(50, requestedRoom, before);
+      if (!isCurrentRequest()) {
+        return false;
+      }
       setChatHistory((prevChatHistory) => prependUniqueMessages(prevChatHistory, page.messages));
       historyCursorRef.current = page.nextCursor;
       setHasOlderMessages(page.hasMore && Boolean(page.nextCursor));
       setHistoryPageVersion((version) => version + 1);
       return true;
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return false;
+      }
       setHistoryError(error instanceof Error ? error.message : 'Older history is unavailable.');
       return false;
     } finally {
-      setHistoryLoading(false);
+      if (isCurrentRequest()) {
+        setHistoryLoading(false);
+      }
     }
   }, [canChat, currentRoom, historyLoading]);
 
