@@ -18,6 +18,11 @@ import (
 
 const maxSeenBrokerEvents = 4096
 
+type leaveNotification struct {
+	parent  context.Context
+	message Message
+}
+
 // Hub manages all connected clients.
 type Hub struct {
 	clients       map[*Client]bool
@@ -43,6 +48,14 @@ type Hub struct {
 	brokerWG      sync.WaitGroup
 	seenEvents    map[string]struct{}
 	seenEventIDs  []string
+	leaveMutex    sync.Mutex
+	leaveQueue    []leaveNotification
+	leaveWake     chan struct{}
+	leaveStop     chan struct{}
+	leaveDone     chan struct{}
+	leaveStart    sync.Once
+	leaveStopOnce sync.Once
+	leaveStarted  atomic.Bool
 }
 
 func newHub(database db.Repository, fanouts ...broker.Fanout) *Hub {
@@ -67,6 +80,9 @@ func newHub(database db.Repository, fanouts ...broker.Fanout) *Hub {
 		fanout:     fanout,
 		instanceID: instanceID,
 		seenEvents: make(map[string]struct{}),
+		leaveWake:  make(chan struct{}, 1),
+		leaveStop:  make(chan struct{}),
+		leaveDone:  make(chan struct{}),
 	}
 }
 
@@ -129,15 +145,92 @@ func (h *Hub) disconnectClientLocked(client *Client) {
 		Room:     room,
 	}
 
-	persisted, err := saveMessageObservedInRoomContext(client.traceContext(), h.database, room, notification.Username, notification.Content, notification.Type)
-	if err != nil {
-		slog.Warn("save leave notification", "err", err)
-	} else {
-		notification.ID = persisted.ID
-		notification.Timestamp = persisted.Timestamp
+	h.queueLeaveNotification(client.traceContext(), notification)
+}
+
+func (h *Hub) queueLeaveNotification(parent context.Context, message Message) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	h.leaveMutex.Lock()
+	h.leaveQueue = append(h.leaveQueue, leaveNotification{parent: parent, message: message})
+	h.leaveMutex.Unlock()
+
+	h.leaveStart.Do(func() {
+		h.leaveStarted.Store(true)
+		go h.runLeaveNotifications()
+	})
+	select {
+	case h.leaveWake <- struct{}{}:
+	default:
+	}
+}
+
+func (h *Hub) nextLeaveNotification() (leaveNotification, bool) {
+	h.leaveMutex.Lock()
+	defer h.leaveMutex.Unlock()
+	if len(h.leaveQueue) == 0 {
+		return leaveNotification{}, false
 	}
 
-	h.publishContext(client.traceContext(), notification)
+	notification := h.leaveQueue[0]
+	h.leaveQueue[0] = leaveNotification{}
+	h.leaveQueue = h.leaveQueue[1:]
+	if len(h.leaveQueue) == 0 {
+		h.leaveQueue = nil
+	}
+	return notification, true
+}
+
+func (h *Hub) runLeaveNotifications() {
+	defer close(h.leaveDone)
+
+	persistAndPublish := func(notification leaveNotification) {
+		persisted, err := saveMessageObservedInRoomContext(
+			notification.parent,
+			h.database,
+			notification.message.Room,
+			notification.message.Username,
+			notification.message.Content,
+			notification.message.Type,
+		)
+		if err != nil {
+			slog.Warn("save leave notification", "err", err)
+		} else {
+			notification.message.ID = persisted.ID
+			notification.message.Timestamp = persisted.Timestamp
+		}
+
+		h.publishContext(notification.parent, notification.message)
+	}
+
+	for {
+		notification, ok := h.nextLeaveNotification()
+		if ok {
+			persistAndPublish(notification)
+			continue
+		}
+
+		select {
+		case <-h.leaveWake:
+		case <-h.leaveStop:
+			for {
+				notification, ok := h.nextLeaveNotification()
+				if !ok {
+					return
+				}
+				persistAndPublish(notification)
+			}
+		}
+	}
+}
+
+func (h *Hub) stopLeaveNotifications() {
+	if !h.leaveStarted.Load() {
+		return
+	}
+	h.leaveStopOnce.Do(func() { close(h.leaveStop) })
+	<-h.leaveDone
 }
 
 func (h *Hub) publishContext(parent context.Context, message Message) bool {
@@ -445,6 +538,7 @@ func (h *Hub) drain(ctx context.Context) error {
 	}
 
 	h.stop()
+	h.stopLeaveNotifications()
 	if h.runStarted.Load() {
 		<-h.runDone
 	}

@@ -940,8 +940,15 @@ func TestHubDisconnectClientRemovesAndNotifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = database.Close() }()
 	hub := newHub(database)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := hub.Shutdown(ctx); err != nil {
+			t.Errorf("hub shutdown: %v", err)
+		}
+		_ = database.Close()
+	}()
 
 	client := &Client{
 		Username: "bob",
@@ -965,17 +972,83 @@ func TestHubDisconnectClientRemovesAndNotifies(t *testing.T) {
 		t.Fatal("client should be closed")
 	}
 
-	select {
-	case msg := <-hub.broadcast:
-		if msg.Type != "notification" || !strings.Contains(msg.Content, "left the chat") {
-			t.Fatalf("unexpected leave notification: %#v", msg)
-		}
-	default:
-		t.Fatal("expected leave notification")
-	}
+	waitForLeaveNotification(t, hub)
 
 	if got := messageContentCount(t, database, "bob left the chat"); got != 1 {
 		t.Fatalf("leave notification should be persisted once, got %d", got)
+	}
+}
+
+func TestHubDisconnectClientDoesNotBlockOnFullBroadcast(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "disconnect-backpressure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := newHub(database)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := hub.Shutdown(ctx); err != nil {
+			t.Errorf("hub shutdown: %v", err)
+		}
+		_ = database.Close()
+	}()
+
+	for i := 0; i < cap(hub.broadcast); i++ {
+		hub.broadcast <- Message{Type: "message", Content: "queued"}
+	}
+
+	client := &Client{
+		Username: "bob",
+		send:     make(chan Message, 1),
+		done:     make(chan struct{}),
+	}
+	hub.mutex.Lock()
+	hub.clients[client] = true
+	hub.mutex.Unlock()
+
+	disconnected := make(chan struct{})
+	go func() {
+		hub.mutex.Lock()
+		hub.disconnectClientLocked(client)
+		hub.mutex.Unlock()
+		close(disconnected)
+	}()
+
+	timedOut := false
+	select {
+	case <-disconnected:
+	case <-time.After(500 * time.Millisecond):
+		timedOut = true
+		<-hub.broadcast
+		select {
+		case <-disconnected:
+		case <-time.After(2 * time.Second):
+			t.Fatal("disconnect did not finish after broadcast capacity was released")
+		}
+	}
+	if timedOut {
+		t.Fatal("disconnect blocked on a full broadcast queue")
+	}
+
+	waitForLeaveNotification(t, hub)
+	if got := messageContentCount(t, database, "bob left the chat"); got != 1 {
+		t.Fatalf("leave notification should be persisted once, got %d", got)
+	}
+}
+
+func waitForLeaveNotification(t *testing.T, hub *Hub) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-hub.broadcast:
+			if msg.Type == "notification" && strings.Contains(msg.Content, "left the chat") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for leave notification")
+		}
 	}
 }
 
