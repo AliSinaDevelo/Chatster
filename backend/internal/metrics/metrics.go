@@ -47,7 +47,7 @@ var (
 	WSOutboundDrops = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "chatster",
 		Name:      "websocket_outbound_drops_total",
-		Help:      "Outbound WebSocket messages dropped by reason (slow_client, write_error).",
+		Help:      "Outbound WebSocket messages dropped by reason (slow_client, write_error, leave_backpressure).",
 	}, []string{"reason"})
 
 	MessagesIngested = promauto.NewCounter(prometheus.CounterOpts{

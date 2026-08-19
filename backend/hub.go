@@ -16,7 +16,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-const maxSeenBrokerEvents = 4096
+const (
+	maxSeenBrokerEvents        = 4096
+	leaveNotificationQueueSize = 256
+)
 
 type leaveNotification struct {
 	parent  context.Context
@@ -48,9 +51,7 @@ type Hub struct {
 	brokerWG      sync.WaitGroup
 	seenEvents    map[string]struct{}
 	seenEventIDs  []string
-	leaveMutex    sync.Mutex
-	leaveQueue    []leaveNotification
-	leaveWake     chan struct{}
+	leaveQueue    chan leaveNotification
 	leaveStop     chan struct{}
 	leaveDone     chan struct{}
 	leaveStart    sync.Once
@@ -80,7 +81,7 @@ func newHub(database db.Repository, fanouts ...broker.Fanout) *Hub {
 		fanout:     fanout,
 		instanceID: instanceID,
 		seenEvents: make(map[string]struct{}),
-		leaveWake:  make(chan struct{}, 1),
+		leaveQueue: make(chan leaveNotification, leaveNotificationQueueSize),
 		leaveStop:  make(chan struct{}),
 		leaveDone:  make(chan struct{}),
 	}
@@ -152,34 +153,18 @@ func (h *Hub) queueLeaveNotification(parent context.Context, message Message) {
 	if parent == nil {
 		parent = context.Background()
 	}
-	h.leaveMutex.Lock()
-	h.leaveQueue = append(h.leaveQueue, leaveNotification{parent: parent, message: message})
-	h.leaveMutex.Unlock()
 
 	h.leaveStart.Do(func() {
 		h.leaveStarted.Store(true)
 		go h.runLeaveNotifications()
 	})
+	notification := leaveNotification{parent: parent, message: message}
 	select {
-	case h.leaveWake <- struct{}{}:
+	case h.leaveQueue <- notification:
 	default:
+		metrics.WSOutboundDrops.WithLabelValues("leave_backpressure").Inc()
+		slog.Warn("drop leave notification", "room", message.Room, "reason", "backpressure")
 	}
-}
-
-func (h *Hub) nextLeaveNotification() (leaveNotification, bool) {
-	h.leaveMutex.Lock()
-	defer h.leaveMutex.Unlock()
-	if len(h.leaveQueue) == 0 {
-		return leaveNotification{}, false
-	}
-
-	notification := h.leaveQueue[0]
-	h.leaveQueue[0] = leaveNotification{}
-	h.leaveQueue = h.leaveQueue[1:]
-	if len(h.leaveQueue) == 0 {
-		h.leaveQueue = nil
-	}
-	return notification, true
 }
 
 func (h *Hub) runLeaveNotifications() {
@@ -205,21 +190,17 @@ func (h *Hub) runLeaveNotifications() {
 	}
 
 	for {
-		notification, ok := h.nextLeaveNotification()
-		if ok {
-			persistAndPublish(notification)
-			continue
-		}
-
 		select {
-		case <-h.leaveWake:
+		case notification := <-h.leaveQueue:
+			persistAndPublish(notification)
 		case <-h.leaveStop:
 			for {
-				notification, ok := h.nextLeaveNotification()
-				if !ok {
+				select {
+				case notification := <-h.leaveQueue:
+					persistAndPublish(notification)
+				default:
 					return
 				}
-				persistAndPublish(notification)
 			}
 		}
 	}

@@ -18,7 +18,9 @@ import (
 	"github.com/AliSinaDevelo/Chatster/db"
 	"github.com/AliSinaDevelo/Chatster/internal/auth"
 	"github.com/AliSinaDevelo/Chatster/internal/config"
+	"github.com/AliSinaDevelo/Chatster/internal/metrics"
 	"github.com/gorilla/websocket"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func testStack(t *testing.T) (cfg config.Config, database *db.DB, hub *Hub, cleanup func()) {
@@ -43,6 +45,29 @@ func testStack(t *testing.T) (cfg config.Config, database *db.DB, hub *Hub, clea
 		}
 		_ = d.Close()
 	}
+}
+
+type blockingMessageRepository struct {
+	db.Repository
+	saveStarted chan struct{}
+	releaseSave chan struct{}
+}
+
+func (r *blockingMessageRepository) SaveMessageForUserInRoomContext(
+	ctx context.Context,
+	room, userID, username, content, msgType string,
+) (*db.Message, error) {
+	select {
+	case <-r.saveStarted:
+	default:
+		close(r.saveStarted)
+	}
+	select {
+	case <-r.releaseSave:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return r.Repository.SaveMessageForUserInRoomContext(ctx, room, userID, username, content, msgType)
 }
 
 func TestNewAuthServiceRequiresOriginsOnlyForSessionMode(t *testing.T) {
@@ -1034,6 +1059,69 @@ func TestHubDisconnectClientDoesNotBlockOnFullBroadcast(t *testing.T) {
 	waitForLeaveNotification(t, hub)
 	if got := messageContentCount(t, database, "bob left the chat"); got != 1 {
 		t.Fatalf("leave notification should be persisted once, got %d", got)
+	}
+}
+
+func TestHubLeaveNotificationQueueIsBoundedDuringStorageBackpressure(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "leave-backpressure.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &blockingMessageRepository{
+		Repository:  database,
+		saveStarted: make(chan struct{}),
+		releaseSave: make(chan struct{}),
+	}
+	hub := newHub(repository)
+	defer func() { _ = database.Close() }()
+
+	notification := Message{
+		Username: "System",
+		Content:  "bounded leave notification",
+		Type:     "notification",
+		Room:     db.DefaultRoom,
+	}
+	hub.queueLeaveNotification(context.Background(), notification)
+	select {
+	case <-repository.saveStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("leave notification worker did not start persistence")
+	}
+	dropCounter := metrics.WSOutboundDrops.WithLabelValues("leave_backpressure")
+	dropsBefore := &dto.Metric{}
+	if err := dropCounter.Write(dropsBefore); err != nil {
+		t.Fatalf("read leave notification drop counter: %v", err)
+	}
+
+	queued := make(chan struct{})
+	go func() {
+		for range leaveNotificationQueueSize + 1 {
+			hub.queueLeaveNotification(context.Background(), notification)
+		}
+		close(queued)
+	}()
+	select {
+	case <-queued:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("leave notification admission blocked under storage backpressure")
+	}
+
+	close(repository.releaseSave)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := hub.Shutdown(ctx); err != nil {
+		t.Fatalf("hub shutdown: %v", err)
+	}
+
+	if got, want := messageContentCount(t, database, notification.Content), leaveNotificationQueueSize+1; got != want {
+		t.Fatalf("persisted leave notifications = %d, want bounded total %d", got, want)
+	}
+	dropsAfter := &dto.Metric{}
+	if err := dropCounter.Write(dropsAfter); err != nil {
+		t.Fatalf("read leave notification drop counter: %v", err)
+	}
+	if got := dropsAfter.GetCounter().GetValue() - dropsBefore.GetCounter().GetValue(); got != 1 {
+		t.Fatalf("leave notification backpressure drops = %v, want 1", got)
 	}
 }
 
