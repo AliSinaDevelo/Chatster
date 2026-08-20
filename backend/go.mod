@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.7.4
-	github.com/mattn/go-sqlite3 v1.14.28
+	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/prometheus/client_golang v1.20.5
 	github.com/redis/go-redis/v9 v9.17.3
 	go.opentelemetry.io/otel v1.34.0
