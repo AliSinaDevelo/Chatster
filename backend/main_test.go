@@ -1125,6 +1125,44 @@ func TestHubLeaveNotificationQueueIsBoundedDuringStorageBackpressure(t *testing.
 	}
 }
 
+func TestHubShutdownHonorsLeaveStorageDeadline(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "leave-shutdown-deadline.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &blockingMessageRepository{
+		Repository:  database,
+		saveStarted: make(chan struct{}),
+		releaseSave: make(chan struct{}),
+	}
+	hub := newHub(repository)
+	hub.queueLeaveNotification(context.Background(), Message{
+		Username: "System",
+		Content:  "deadline leave notification",
+		Type:     "notification",
+		Room:     db.DefaultRoom,
+	})
+	select {
+	case <-repository.saveStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("leave notification worker did not start persistence")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := hub.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected leave persistence deadline error, got %v", err)
+	}
+	select {
+	case <-hub.leaveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("leave notification worker did not stop after shutdown cancellation")
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func waitForLeaveNotification(t *testing.T, hub *Hub) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
