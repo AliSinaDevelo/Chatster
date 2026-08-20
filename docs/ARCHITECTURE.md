@@ -80,6 +80,7 @@ sequenceDiagram
 - The hub filters fan-out by the client's selected room before enqueueing, so a message in one room is not delivered to another room.
 - Each client has one writer goroutine. All server writes to a given `*websocket.Conn` still go through **`Client.writeJSON`** (mutex) because **gorilla/websocket** permits only one concurrent writer per connection (queued messages + heartbeat control frames can otherwise race).
 - A full outbound queue is treated as a slow-client failure: the server disconnects that client and increments `chatster_websocket_outbound_drops_total{reason="slow_client"}`.
+- Named-client leave notifications use a 256-entry FIFO worker so repository latency cannot stall the hub mutex or grow memory without bound. Overflow is treated as best-effort presence loss and increments `chatster_websocket_outbound_drops_total{reason="leave_backpressure"}`.
 
 **Shutdown lifecycle**
 

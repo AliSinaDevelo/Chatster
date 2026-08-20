@@ -104,6 +104,42 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /load older messages/i })).not.toBeInTheDocument();
   });
 
+  test('ignores an older history response after switching rooms', async () => {
+    let resolveOlderHistory;
+    const olderHistory = new Promise((resolve) => {
+      resolveOlderHistory = resolve;
+    });
+    fetchHistoryPage
+      .mockResolvedValueOnce({
+        messages: [{ id: 2, type: 'message', username: 'bob', content: 'current general' }],
+        hasMore: true,
+        nextCursor: 'general-cursor',
+      })
+      .mockReturnValueOnce(olderHistory);
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: /load older messages/i }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /chat room/i }),
+      'engineering'
+    );
+
+    await waitFor(() => {
+      expect(fetchHistoryPage).toHaveBeenLastCalledWith(50, 'engineering');
+    });
+    await act(async () => {
+      resolveOlderHistory({
+        messages: [{ id: 1, type: 'message', username: 'alice', content: 'stale general' }],
+        hasMore: false,
+        nextCursor: null,
+      });
+    });
+
+    expect(screen.queryByText('stale general')).not.toBeInTheDocument();
+  });
+
   test('disconnects on unmount', () => {
     const { unmount } = render(<App />);
     unmount();

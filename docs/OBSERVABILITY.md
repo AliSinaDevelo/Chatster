@@ -22,7 +22,7 @@ Namespaces and names follow `chatster_*` where applicable. Inspect `/metrics` on
 | `chatster_websocket_drain_duration_seconds` | Histogram | Duration of each WebSocket hub drain operation. |
 | `chatster_websocket_drain_clients_remaining` | Gauge | Client loops that have not reported completion during a drain. |
 | `chatster_websocket_drain_forced_closes_total` | Counter | Clients still active when the shutdown drain deadline expired. |
-| `chatster_websocket_outbound_drops_total{reason}` | Counter | Outbound drops by reason: `slow_client`, `write_error`. |
+| `chatster_websocket_outbound_drops_total{reason}` | Counter | Outbound drops by reason: `slow_client`, `write_error`, `leave_backpressure`. |
 | `chatster_chat_messages_ingested_total` | Counter | Valid chat messages accepted for persistence and broadcast. |
 | `chatster_chat_messages_rejected_total{reason}` | Counter | Rejected chat inputs by reason: `invalid_username`, `invalid_body`, `identity_override`, `rate_limited`. |
 | `chatster_chat_messages_pruned_total` | Counter | Persisted chat messages removed by the startup retention policy. |

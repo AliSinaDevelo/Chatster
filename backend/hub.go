@@ -16,7 +16,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-const maxSeenBrokerEvents = 4096
+const (
+	maxSeenBrokerEvents        = 4096
+	leaveNotificationQueueSize = 256
+)
+
+type leaveNotification struct {
+	parent  context.Context
+	message Message
+}
 
 // Hub manages all connected clients.
 type Hub struct {
@@ -43,6 +51,14 @@ type Hub struct {
 	brokerWG      sync.WaitGroup
 	seenEvents    map[string]struct{}
 	seenEventIDs  []string
+	leaveQueue    chan leaveNotification
+	leaveCtx      context.Context
+	leaveCancel   context.CancelFunc
+	leaveStop     chan struct{}
+	leaveDone     chan struct{}
+	leaveStart    sync.Once
+	leaveStopOnce sync.Once
+	leaveStarted  atomic.Bool
 }
 
 func newHub(database db.Repository, fanouts ...broker.Fanout) *Hub {
@@ -54,19 +70,25 @@ func newHub(database db.Repository, fanouts ...broker.Fanout) *Hub {
 	if fanout != nil {
 		instanceID = fanout.InstanceID()
 	}
+	leaveCtx, leaveCancel := context.WithCancel(context.Background())
 	return &Hub{
 		clients: make(map[*Client]bool),
 		// Buffered so client read loops are not blocked while the hub writes to their socket (avoids deadlock).
 		broadcast: make(chan Message, 1024),
 		// Unregister remains synchronous while the hub is running so leave notifications retain ordering.
-		unregister: make(chan *Client),
-		done:       make(chan struct{}),
-		runDone:    make(chan struct{}),
-		finished:   make(map[*Client]struct{}),
-		database:   database,
-		fanout:     fanout,
-		instanceID: instanceID,
-		seenEvents: make(map[string]struct{}),
+		unregister:  make(chan *Client),
+		done:        make(chan struct{}),
+		runDone:     make(chan struct{}),
+		finished:    make(map[*Client]struct{}),
+		database:    database,
+		fanout:      fanout,
+		instanceID:  instanceID,
+		seenEvents:  make(map[string]struct{}),
+		leaveQueue:  make(chan leaveNotification, leaveNotificationQueueSize),
+		leaveCtx:    leaveCtx,
+		leaveCancel: leaveCancel,
+		leaveStop:   make(chan struct{}),
+		leaveDone:   make(chan struct{}),
 	}
 }
 
@@ -129,15 +151,100 @@ func (h *Hub) disconnectClientLocked(client *Client) {
 		Room:     room,
 	}
 
-	persisted, err := saveMessageObservedInRoomContext(client.traceContext(), h.database, room, notification.Username, notification.Content, notification.Type)
-	if err != nil {
-		slog.Warn("save leave notification", "err", err)
-	} else {
-		notification.ID = persisted.ID
-		notification.Timestamp = persisted.Timestamp
+	h.queueLeaveNotification(client.traceContext(), notification)
+}
+
+func (h *Hub) queueLeaveNotification(parent context.Context, message Message) {
+	if parent == nil {
+		parent = context.Background()
 	}
 
-	h.publishContext(client.traceContext(), notification)
+	h.leaveStart.Do(func() {
+		h.leaveStarted.Store(true)
+		go h.runLeaveNotifications()
+	})
+	notification := leaveNotification{parent: parent, message: message}
+	select {
+	case h.leaveQueue <- notification:
+	default:
+		metrics.WSOutboundDrops.WithLabelValues("leave_backpressure").Inc()
+		slog.Warn("drop leave notification", "room", message.Room, "reason", "backpressure")
+	}
+}
+
+func (h *Hub) runLeaveNotifications() {
+	defer close(h.leaveDone)
+
+	persistAndPublish := func(notification leaveNotification) {
+		storageCtx, cancel := h.leaveNotificationContext(notification.parent)
+		persisted, err := saveMessageObservedInRoomContext(
+			storageCtx,
+			h.database,
+			notification.message.Room,
+			notification.message.Username,
+			notification.message.Content,
+			notification.message.Type,
+		)
+		cancel()
+		if err != nil {
+			slog.Warn("save leave notification", "err", err)
+		} else {
+			notification.message.ID = persisted.ID
+			notification.message.Timestamp = persisted.Timestamp
+		}
+
+		h.publishContext(notification.parent, notification.message)
+	}
+
+	for {
+		select {
+		case notification := <-h.leaveQueue:
+			persistAndPublish(notification)
+		case <-h.leaveStop:
+			for {
+				if h.leaveCtx.Err() != nil {
+					return
+				}
+				select {
+				case notification := <-h.leaveQueue:
+					persistAndPublish(notification)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (h *Hub) leaveNotificationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(h.leaveCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+func (h *Hub) stopLeaveNotifications(ctx context.Context) error {
+	if !h.leaveStarted.Load() {
+		return nil
+	}
+	stopOnContextDone := context.AfterFunc(ctx, h.leaveCancel)
+	defer stopOnContextDone()
+	h.leaveStopOnce.Do(func() { close(h.leaveStop) })
+	select {
+	case <-h.leaveDone:
+	case <-ctx.Done():
+		h.leaveCancel()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	h.leaveCancel()
+	return nil
 }
 
 func (h *Hub) publishContext(parent context.Context, message Message) bool {
@@ -445,6 +552,7 @@ func (h *Hub) drain(ctx context.Context) error {
 	}
 
 	h.stop()
+	leaveErr := h.stopLeaveNotifications(ctx)
 	if h.runStarted.Load() {
 		<-h.runDone
 	}
@@ -454,6 +562,9 @@ func (h *Hub) drain(ctx context.Context) error {
 	slog.Info("websocket drain completed", "duration_seconds", duration.Seconds(), "remaining_clients", remaining, "forced_closes", forcedCloses)
 	if forcedCloses > 0 {
 		return ctx.Err()
+	}
+	if leaveErr != nil {
+		return leaveErr
 	}
 	return nil
 }
