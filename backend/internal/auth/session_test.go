@@ -73,10 +73,11 @@ func TestSessionRejectsExpiredAndTamperedCookies(t *testing.T) {
 
 	tampered := *cookie
 	replacement := "x"
-	if strings.HasSuffix(cookie.Value, replacement) {
+	signatureStart := strings.LastIndexByte(cookie.Value, '.') + 1
+	if cookie.Value[signatureStart:signatureStart+1] == replacement {
 		replacement = "y"
 	}
-	tampered.Value = cookie.Value[:len(cookie.Value)-1] + replacement
+	tampered.Value = cookie.Value[:signatureStart] + replacement + cookie.Value[signatureStart+1:]
 	tamperedRequest := httptest.NewRequest("GET", "/api/messages", nil)
 	tamperedRequest.AddCookie(&tampered)
 	if _, err := service.Authenticate(tamperedRequest); !errors.Is(err, ErrInvalidSession) {
