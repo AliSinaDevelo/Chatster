@@ -150,6 +150,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     const input = await screen.findByPlaceholderText(/enter your username/i);
+    await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, 'alice');
     await user.click(screen.getByRole('button', { name: /join chat/i }));
     await waitFor(() => {
